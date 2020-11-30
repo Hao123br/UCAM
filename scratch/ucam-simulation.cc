@@ -248,10 +248,10 @@ int main  (int argc, char *argv[])
 	mesh.SetNumberOfInterfaces (1);
 	mesh.SetStandard(WIFI_STANDARD_80211ac);
 	// Install protocols and return container if MeshPointDevices
-	NetDeviceContainer relayDevices;
-	relayDevices = mesh.Install (phy, relays);
 	NetDeviceContainer meshDevices;
 	meshDevices = mesh.Install (phy, NodeContainer (firstResponders, trackers, victims));
+	NetDeviceContainer relayDevices;
+	relayDevices = mesh.Install (phy, relays);
 
 	available_relays.assign (relays.Begin(), relays.End());
 
