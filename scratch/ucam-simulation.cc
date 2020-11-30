@@ -274,7 +274,7 @@ int main  (int argc, char *argv[])
 	Ipv4AddressHelper address;
 	address.SetBase ("10.1.1.0", "255.255.255.0");
 	Ipv4InterfaceContainer interfaces;
-	interfaces = address.Assign (meshDevices);
+	interfaces = address.Assign (NetDeviceContainer (meshDevices, relayDevices));
 
 	ApplicationContainer clients;
 	clients = installApps(firstResponders.Get(0), trackers);
