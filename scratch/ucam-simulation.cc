@@ -27,12 +27,15 @@
 #include "ns3/wifi-phy.h"
 #include "ns3/evalvid-client-server-helper.h"
 #include "ns3/netanim-module.h"
+#include "ns3/log.h"
 
 #include <list>
 #include <unordered_map>
 #include <cmath>
 
 using namespace ns3;
+
+NS_LOG_COMPONENT_DEFINE ("UCAM");
 
 unsigned int simTime = 200;
 short nTrackers = 2;
@@ -41,7 +44,7 @@ short nVictims = 2;
 bool enableNetAnim = false;
 list<Ptr<Node>> available_relays;
 unordered_map<unsigned int, list<Ptr<Node>>> relay_chains;
-float max_tx_radius = 45;
+float max_tx_radius = 50;
 float drone_speed = 10;
 
 void installMobility( NodeContainer firstResponders, NodeContainer drones, NodeContainer victims)
@@ -120,7 +123,7 @@ void move_drone(Ptr<Node> drone, Vector destination, double n_vel) {
 	unsigned int nodeId = drone->GetId();
 	double currentTime = Simulator::Now().GetSeconds();
 	double nWaypointTime;
-	NS_LOG_UNCOND("moving drone with nodeId: " << nodeId << " from " << m_position << " to " << destination << " time: " << currentTime);
+	NS_LOG_DEBUG("moving drone with nodeId: " << nodeId << " from " << m_position << " to " << destination << " time: " << currentTime);
 
 	mob->EndMobility();
 	mob->AddWaypoint(Waypoint(Simulator::Now(), m_position));
@@ -163,12 +166,37 @@ void set_wifi_state(Ptr<NetDevice> relay, bool state) {
 		relayPhy->SetOffMode();
 }
 
+Vector calculate_future_position(Ptr<WaypointMobilityModel> mobility)
+{
+	const float seconds = 1;
+	double distance;
+	double x,y,z;
+	Vector destination = mobility->GetNextWaypoint().position;
+	Vector position = mobility->GetPosition();
+	Vector future_position;
+
+	NS_LOG_UNCOND("tracker next waypoint: " << destination);
+
+	distance = CalculateDistance(destination, position);
+	x = drone_speed * (destination.x - position.x) / distance;
+	y = drone_speed * (destination.y - position.y) / distance;
+	z = drone_speed * (destination.z - position.z) / distance;
+
+	future_position.x = position.x + seconds * x;
+	future_position.y = position.y + seconds * y;
+	future_position.z = position.z + seconds * z;
+
+	return future_position;
+}
+
 void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 	double distance;
 	double inter_drone_distance;
 	double x,y,z;
-	Vector fr_position = firstResponders->GetObject<MobilityModel>()->GetPosition();;
+	Ptr<WaypointMobilityModel> tracker_mobility;
+	Vector fr_position = firstResponders->GetObject<MobilityModel>()->GetPosition();
 	Vector tracker_position;
+	Vector tracker_destination;
 	Vector relay_position;
 	Vector relay_destination;
 	Ptr<Node> tracker;
@@ -179,8 +207,16 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 	for(auto iter = trackers.Begin(); iter != trackers.End(); ++iter)
 	{
 		tracker = *iter;
-		tracker_position = tracker->GetObject<MobilityModel>()->GetPosition();;
+		tracker_mobility = tracker->GetObject<WaypointMobilityModel>();
+		tracker_position = tracker_mobility->GetPosition();
+		tracker_destination = tracker_mobility->GetNextWaypoint().position;
 		list<Ptr<Node>>& relay_chain = relay_chains[tracker->GetId()];
+
+		if(CalculateDistance(tracker_destination, tracker_position) > drone_speed)
+		{
+			NS_LOG_DEBUG("relays may be lagging behind, adjusting relays positions");
+			tracker_position = calculate_future_position(tracker_mobility);
+		}
 
 		distance = CalculateDistance(fr_position, tracker_position);
 		relays_required = (int) ceil(distance / max_tx_radius) - 1;
@@ -194,7 +230,7 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 			relay_destination.x = tracker_position.x - i * x;
 			relay_destination.y = tracker_position.y - i * y;
 			relay_destination.z = tracker_position.z - i * z;
-			move_drone(relay, relay_destination, drone_speed+2);
+			move_drone(relay, relay_destination, drone_speed);
 			++i;
 		}
 
@@ -206,7 +242,7 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 			allocated_relay = closest_drone(relay_destination, available_relays);
 			relay_chain.push_back(*allocated_relay);
 			available_relays.erase(allocated_relay);
-			move_drone(*allocated_relay, relay_destination, drone_speed+2);
+			move_drone(*allocated_relay, relay_destination, drone_speed);
 			set_wifi_state((*allocated_relay)->GetDevice(0), true);
 			++i;
 		}
