@@ -175,7 +175,7 @@ Vector calculate_future_position(Ptr<WaypointMobilityModel> mobility)
 	Vector position = mobility->GetPosition();
 	Vector future_position;
 
-	NS_LOG_UNCOND("tracker next waypoint: " << destination);
+	NS_LOG_INFO("tracker next waypoint: " << destination);
 
 	distance = CalculateDistance(destination, position);
 	x = drone_speed * (destination.x - position.x) / distance;
@@ -252,6 +252,7 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 
 int main  (int argc, char *argv[])
 {
+	LogComponentEnable ("UCAM", LOG_LEVEL_DEBUG);
 	LogComponentEnable ("EvalvidClient", LOG_LEVEL_INFO);
 	LogComponentEnable ("EvalvidServer", LOG_LEVEL_INFO);
 
