@@ -49,15 +49,19 @@ float drone_speed = 10;
 
 void installMobility( NodeContainer firstResponders, NodeContainer drones, NodeContainer victims)
 {
+	Ptr<ListPositionAllocator> allocator = CreateObject<ListPositionAllocator> ();
+	allocator->Add (Vector(1000, 1000, 0));
+
 	MobilityHelper mobility;
 	mobility.SetMobilityModel ("ns3::ConstantPositionMobilityModel");
+	mobility.SetPositionAllocator (allocator);
 	mobility.Install (firstResponders);
 
 	mobility.SetMobilityModel("ns3::WaypointMobilityModel",
 								"InitialPositionIsWaypoint", BooleanValue (true));
 	mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
-								   "MinX", DoubleValue (-70.0),
-								   "MinY", DoubleValue (-70.0),
+								   "MinX", DoubleValue (930.0),
+								   "MinY", DoubleValue (930.0),
 								   "DeltaX", DoubleValue (20.0),
 								   "DeltaY", DoubleValue (20.0),
 								   "GridWidth", UintegerValue (8),
@@ -68,10 +72,10 @@ void installMobility( NodeContainer firstResponders, NodeContainer drones, NodeC
 								"Mode", StringValue ("Time"),
 								"Time", StringValue ("5s"),
 								"Speed", StringValue ("ns3::UniformRandomVariable[Min=2.0|Max=8.0]"),
-								"Bounds", StringValue ("-1000|1000|-1000|1000"));
+								"Bounds", StringValue ("0|2000|0|2000"));
 	mobility.SetPositionAllocator("ns3::RandomBoxPositionAllocator",
-								 "X", StringValue ("ns3::UniformRandomVariable[Min=-1000.0|Max=1000.0]"),
-								 "Y", StringValue ("ns3::UniformRandomVariable[Min=-1000.0|Max=1000.0]"),
+								 "X", StringValue ("ns3::UniformRandomVariable[Min=0.0|Max=2000.0]"),
+								 "Y", StringValue ("ns3::UniformRandomVariable[Min=0.0|Max=2000.0]"),
 								 "Z", StringValue ("ns3::UniformRandomVariable[Min=1.0|Max=1.5]"));
 	mobility.Install (victims);
 }
