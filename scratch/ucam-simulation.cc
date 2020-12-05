@@ -32,6 +32,7 @@
 #include <list>
 #include <unordered_map>
 #include <cmath>
+#include <string>
 
 using namespace ns3;
 
@@ -42,8 +43,10 @@ short nTrackers = 2;
 short nRelays = 62;
 short nVictims = 2;
 bool enableNetAnim = false;
+NodeContainer firstResponders;
 list<Ptr<Node>> available_relays;
 unordered_map<unsigned int, list<Ptr<Node>>> relay_chains;
+unordered_map<unsigned int, Ptr<Node>> tracker_by_id;
 float max_tx_radius = 50;
 float drone_speed = 10;
 
@@ -80,38 +83,66 @@ void installMobility( NodeContainer firstResponders, NodeContainer drones, NodeC
 	mobility.Install (victims);
 }
 
-ApplicationContainer installApps(Ptr<Node> base, NodeContainer trackers)
+void install_servers(NodeContainer trackers)
 {
 	ApplicationContainer servers;
-	ApplicationContainer clients;
+	uint16_t id;
 	uint16_t port;
 	Ptr<Node> tracker;
-	Ipv4Address tracker_address;
-	for(uint16_t i = 0; i < nTrackers; ++i)
+	for(auto iter = trackers.Begin(); iter != trackers.End(); ++iter)
 	{
-		port = 8000 + i;
+		tracker = *iter;
+		id = tracker->GetId();
+		port = 8000 + id;
 		std::stringstream sdTrace;
-		std::stringstream rdTrace;
-		sdTrace << "evalvid-logs/sd_a01_" << i;
-		rdTrace << "evalvid-logs/rd_a01_" << i;
+		sdTrace << "evalvid-logs/sd_a01_" << id;
 
-		tracker = trackers.Get (i);
 		EvalvidServerHelper server(port);
 		server.SetAttribute ("SenderTraceFilename", StringValue("src/evalvid/st_highway_cif.st"));
 		server.SetAttribute ("SenderDumpFilename", StringValue(sdTrace.str()));
 		server.SetAttribute ("PacketPayload", UintegerValue(1024));
 		servers.Add (server.Install (tracker));
-
-		tracker_address = tracker->GetObject<Ipv4>()->GetAddress(1,0).GetLocal();
-		EvalvidClientHelper client (tracker_address,port);
-		client.SetAttribute ("ReceiverDumpFilename", StringValue(rdTrace.str()));
-		clients.Add (client.Install (base));
 	}
 	servers.Start (Seconds (1));
 	servers.Stop (Seconds (simTime-1));
-	clients.Stop (Seconds (simTime-1));
+}
 
-	return clients;
+void stream_video(Ptr<Node> tracker)
+{
+	uint16_t id;
+	uint16_t port;
+	std::stringstream rdTrace;
+	Ipv4Address tracker_address;
+	ApplicationContainer client;
+
+	id = tracker->GetId();
+	port = 8000 + id;
+	rdTrace << "evalvid-logs/rd_a01_" << id;
+
+	tracker_address = tracker->GetObject<Ipv4>()->GetAddress(1,0).GetLocal();
+	EvalvidClientHelper client_helper (tracker_address,port);
+	client_helper.SetAttribute ("ReceiverDumpFilename", StringValue(rdTrace.str()));
+	client = client_helper.Install (firstResponders.Get(0));
+	client.Start(Seconds (1));
+	client.Stop(Seconds (simTime-1));
+}
+
+void CourseChange(std::string context, Ptr<const MobilityModel> model)
+{
+	size_t start = 10;
+	size_t end;
+	string s_id;
+	unsigned int id;
+
+	if(model->GetVelocity().GetLength() > 0)
+		return;
+
+	end = context.find("/", start);
+	s_id = context.substr(start, end - start);
+	id = stoul(s_id);
+
+	NS_LOG_INFO(context << " starting client");
+	stream_video(tracker_by_id[id]);
 }
 
 // move node "smoothly" towards the given position
@@ -264,7 +295,6 @@ int main  (int argc, char *argv[])
 	cmd.AddValue ("netanim", "Enable generation of NetAnim files", enableNetAnim);
 	cmd.Parse (argc, argv);
 
-	NodeContainer firstResponders;
 	firstResponders.Create(1);
 	NodeContainer trackers;
 	trackers.Create(nTrackers);
@@ -304,12 +334,6 @@ int main  (int argc, char *argv[])
 
 	installMobility (firstResponders, NodeContainer(relays, trackers), victims);
 
-	for(auto iter = trackers.Begin(); iter != trackers.End(); ++iter)
-	{
-		Ptr<Node> tracker = *iter;
-		relay_chains[tracker->GetId()] = list<Ptr<Node>>();
-	}
-
 	InternetStackHelper internetStack;
 	internetStack.Install (nodes);
 	Ipv4AddressHelper address;
@@ -317,9 +341,14 @@ int main  (int argc, char *argv[])
 	Ipv4InterfaceContainer interfaces;
 	interfaces = address.Assign (NetDeviceContainer (meshDevices, relayDevices));
 
-	ApplicationContainer clients;
-	clients = installApps(firstResponders.Get(0), trackers);
-	clients.Start (Seconds (110));
+	install_servers(trackers);
+
+	for(auto iter = trackers.Begin(); iter != trackers.End(); ++iter)
+	{
+		Ptr<Node> tracker = *iter;
+		relay_chains[tracker->GetId()] = list<Ptr<Node>>();
+		tracker_by_id[tracker->GetId()] = tracker;
+	}
 
 	move_drone(trackers.Get (0), victims.Get (0)->GetObject<MobilityModel>()->GetPosition(), drone_speed);
 	move_drone(trackers.Get (1), victims.Get (1)->GetObject<MobilityModel>()->GetPosition(), drone_speed);
@@ -358,6 +387,15 @@ int main  (int argc, char *argv[])
 			anim->UpdateNodeColor (vic, 255, 0, 0);
 			anim->UpdateNodeSize (vic->GetId(),5,5);
 		}
+	}
+
+	unsigned int id;
+	std::ostringstream oss;
+	for (uint32_t u = 0; u < trackers.GetN(); ++u) {
+		id = trackers.Get(u)->GetId();
+		oss << "/NodeList/" << id << "/$ns3::MobilityModel/CourseChange";
+		Config::Connect(oss.str(), MakeCallback(&CourseChange));
+		oss.str("");
 	}
 
 	Simulator::Stop (Seconds (simTime));
