@@ -47,6 +47,7 @@ NodeContainer firstResponders;
 list<Ptr<Node>> available_relays;
 unordered_map<unsigned int, list<Ptr<Node>>> relay_chains;
 unordered_map<unsigned int, Ptr<Node>> tracker_by_id;
+unordered_map<unsigned int, bool> streaming_video;
 float max_tx_radius = 50;
 float drone_speed = 10;
 
@@ -123,7 +124,7 @@ void stream_video(Ptr<Node> tracker)
 	EvalvidClientHelper client_helper (tracker_address,port);
 	client_helper.SetAttribute ("ReceiverDumpFilename", StringValue(rdTrace.str()));
 	client = client_helper.Install (firstResponders.Get(0));
-	client.Start(Seconds (1));
+	client.Start(Seconds (1)); //delay start to allow mesh protocol to find a route
 	client.Stop(Seconds (simTime-1));
 }
 
@@ -141,8 +142,12 @@ void CourseChange(std::string context, Ptr<const MobilityModel> model)
 	s_id = context.substr(start, end - start);
 	id = stoul(s_id);
 
-	NS_LOG_INFO(context << " starting client");
-	stream_video(tracker_by_id[id]);
+	if(!streaming_video[id])
+	{
+		NS_LOG_DEBUG(context << " starting client");
+		stream_video(tracker_by_id[id]);
+		streaming_video[id] = true;
+	}
 }
 
 // move node "smoothly" towards the given position
@@ -285,6 +290,25 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 	Simulator::Schedule(Seconds(1), update_relay_chains, trackers, firstResponders);
 }
 
+void track_victims(NodeContainer victims, NodeContainer trackers)
+{
+	list<Ptr<Node>> available_trackers;
+	Ptr<Node> victim;
+	list<Ptr<Node>>::iterator nearest_tracker;
+	Vector victim_position;
+
+	available_trackers.assign (trackers.Begin(), trackers.End());
+	for(auto iter = victims.Begin(); iter != victims.End(); ++iter)
+	{
+		victim = *iter;
+		victim_position = victim->GetObject<MobilityModel>()->GetPosition();
+		nearest_tracker = closest_drone(victim_position, available_trackers);
+		move_drone(*nearest_tracker, victim_position, drone_speed);
+		available_trackers.erase(nearest_tracker);
+	}
+	Simulator::Schedule(Seconds(2), track_victims, victims, trackers);
+}
+
 int main  (int argc, char *argv[])
 {
 	LogComponentEnable ("UCAM", LOG_LEVEL_DEBUG);
@@ -350,15 +374,14 @@ int main  (int argc, char *argv[])
 		tracker_by_id[tracker->GetId()] = tracker;
 	}
 
-	move_drone(trackers.Get (0), victims.Get (0)->GetObject<MobilityModel>()->GetPosition(), drone_speed);
-	move_drone(trackers.Get (1), victims.Get (1)->GetObject<MobilityModel>()->GetPosition(), drone_speed);
+	track_victims(victims, trackers);
 	update_relay_chains(trackers, firstResponders.Get(0));
 
 	AnimationInterface* anim;
 	if(enableNetAnim)
 	{
 		anim = new AnimationInterface("ucam-anim.xml");
-		//anim->SetMaxPktsPerTraceFile(2000000); // Set animation interface max packets.
+		anim->SetMaxPktsPerTraceFile(2000000); // Set animation interface max packets.
 		for (auto iter = firstResponders.Begin(); iter != firstResponders.End(); ++iter)
 		{
 			Ptr<Node> fr = *iter;
