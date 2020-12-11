@@ -260,6 +260,11 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 
 		distance = CalculateDistance(fr_position, tracker_position);
 		relays_required = (int) ceil(distance / max_tx_radius) - 1;
+
+		//TODO: implement algorithm to free unnecessary relays
+		if(relays_required < relay_chain.size())
+			relays_required = relay_chain.size();
+
 		inter_drone_distance = distance / (relays_required + 1);
 		x = inter_drone_distance * (tracker_position.x - fr_position.x) / distance;
 		y = inter_drone_distance * (tracker_position.y - fr_position.y) / distance;
