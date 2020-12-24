@@ -33,6 +33,8 @@
 #include <unordered_map>
 #include <cmath>
 #include <string>
+#include <sstream>
+#include <memory>
 
 using namespace ns3;
 
@@ -51,6 +53,62 @@ unordered_map<unsigned int, bool> streaming_video;
 float max_tx_radius = 50;
 float drone_speed = 10;
 float drone_height = 5;
+std::string ns3_dir;
+std::ofstream victims_positions_log;
+
+std::string exec(std::string cmd)
+{
+    std::array<char, 128> buffer;
+    std::string result;
+    std::shared_ptr<FILE> pipe(popen(cmd.c_str(), "r"), pclose);
+    if (!pipe)
+        throw std::runtime_error("popen() failed!");
+    while (!feof(pipe.get())) {
+        if (fgets(buffer.data(), 128, pipe.get()) != nullptr)
+            result += buffer.data();
+    }
+    return result;
+}
+
+void log_victims_positions(NodeContainer victims, std::ofstream* victims_positions_log){
+	double now = Simulator::Now().GetSeconds();
+	for (NodeContainer::Iterator i = victims.Begin(); i != victims.End (); ++i){
+		Ptr<Node> victim = *i;
+		Ptr<MobilityModel> victim_position = victim->GetObject<MobilityModel> ();
+		Vector pos = victim_position->GetPosition ();
+		*victims_positions_log << now << "," << victim->GetId() << "," << pos.x << "," << pos.y << "\n";
+	}
+	victims_positions_log->flush();
+	Simulator::Schedule(Seconds(1), &log_victims_positions, victims, victims_positions_log);
+}
+
+std::vector<Vector> do_predictions(){
+	static double last_time;
+	static std::vector<Vector> predicted_coords;
+	std::istringstream prediction;
+	std::string extracted_token;
+	std::vector<std::string> tokens;
+	Vector coordinate;
+
+	if(last_time == Simulator::Now().GetSeconds())
+		return predicted_coords; //return cached prediction
+
+	predicted_coords.clear();
+	last_time = Simulator::Now().GetSeconds();
+	prediction.str(exec(std::string("python3 ") + ns3_dir + std::string("/prediction.py 2>>prediction_errors.txt")));
+
+	while(getline(prediction, extracted_token, ' '))
+	{
+		tokens.push_back(extracted_token);
+	}
+
+	for(unsigned int i = 0; i < tokens.size()-1; i+=3){
+		coordinate = Vector(std::stod(tokens[i+1]), std::stod(tokens[i+2]), drone_height);
+		predicted_coords.push_back(coordinate);
+	}
+
+	return predicted_coords;
+}
 
 void installMobility( NodeContainer firstResponders, NodeContainer drones, NodeContainer victims)
 {
@@ -299,21 +357,77 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 
 void track_victims(NodeContainer victims, NodeContainer trackers)
 {
+	double now = Simulator::Now().GetSeconds();
 	list<Ptr<Node>> available_trackers;
-	Ptr<Node> victim;
 	list<Ptr<Node>>::iterator nearest_tracker;
+	Ptr<Node> victim;
 	Vector victim_position;
+	std::vector<Vector> victims_coords;
+
+	if(now >= 10)
+	{
+		victims_coords = do_predictions();
+	}
+	else
+	{
+		for(auto iter = victims.Begin(); iter != victims.End(); ++iter)
+		{
+			victim = *iter;
+			victim_position = victim->GetObject<MobilityModel>()->GetPosition();
+			victims_coords.push_back(victim_position);
+		}
+	}
 
 	available_trackers.assign (trackers.Begin(), trackers.End());
-	for(auto iter = victims.Begin(); iter != victims.End(); ++iter)
+	for(Vector victim_position : victims_coords)
 	{
-		victim = *iter;
-		victim_position = victim->GetObject<MobilityModel>()->GetPosition();
 		nearest_tracker = closest_drone(victim_position, available_trackers);
 		move_drone(*nearest_tracker, victim_position, drone_speed);
 		available_trackers.erase(nearest_tracker);
 	}
 	Simulator::Schedule(Seconds(2), track_victims, victims, trackers);
+}
+
+bool IsTopLevelSourceDir (std::string path)
+{
+	bool haveVersion = false;
+	bool haveLicense = false;
+
+	//
+	// If there's a file named VERSION and a file named LICENSE in this
+	// directory, we assume it's our top level source directory.
+	//
+
+	std::list<std::string> files = SystemPath::ReadFiles (path);
+	for (std::list<std::string>::const_iterator i = files.begin (); i != files.end (); ++i)
+	{
+		if (*i == "VERSION")
+		{
+			haveVersion = true;
+		}
+		else if (*i == "LICENSE")
+		{
+			haveLicense = true;
+		}
+	}
+
+	return haveVersion && haveLicense;
+}
+
+std::string GetTopLevelSourceDir (void)
+{
+	std::string self = SystemPath::FindSelfDirectory ();
+	std::list<std::string> elements = SystemPath::Split (self);
+	while (!elements.empty ())
+	{
+		std::string path = SystemPath::Join (elements.begin (), elements.end ());
+		if (IsTopLevelSourceDir (path))
+		{
+			return path;
+		}
+		elements.pop_back ();
+	}
+	NS_FATAL_ERROR ("Could not find source directory from self=" << self);
 }
 
 int main  (int argc, char *argv[])
@@ -329,6 +443,10 @@ int main  (int argc, char *argv[])
 	cmd.Parse (argc, argv);
 
 	ns3::RngSeedManager::SetSeed(seedValue); //valor de seed para geração de números aleatórios
+	ns3_dir = GetTopLevelSourceDir();
+	victims_positions_log.open("victims_positions_log.txt", std::ofstream::out | std::ofstream::trunc);
+	victims_positions_log << nVictims << std::endl;
+
 	firstResponders.Create(1);
 	NodeContainer trackers;
 	trackers.Create(nTrackers);
@@ -384,6 +502,7 @@ int main  (int argc, char *argv[])
 		tracker_by_id[tracker->GetId()] = tracker;
 	}
 
+	Simulator::Schedule(Seconds(1), &log_victims_positions, victims, &victims_positions_log);
 	track_victims(victims, trackers);
 	update_relay_chains(trackers, firstResponders.Get(0));
 
