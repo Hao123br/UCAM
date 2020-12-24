@@ -50,6 +50,7 @@ unordered_map<unsigned int, Ptr<Node>> tracker_by_id;
 unordered_map<unsigned int, bool> streaming_video;
 float max_tx_radius = 50;
 float drone_speed = 10;
+float drone_height = 5;
 
 void installMobility( NodeContainer firstResponders, NodeContainer drones, NodeContainer victims)
 {
@@ -66,6 +67,7 @@ void installMobility( NodeContainer firstResponders, NodeContainer drones, NodeC
 	mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
 								   "MinX", DoubleValue (930.0),
 								   "MinY", DoubleValue (930.0),
+								   "Z", DoubleValue (drone_height),
 								   "DeltaX", DoubleValue (20.0),
 								   "DeltaY", DoubleValue (20.0),
 								   "GridWidth", UintegerValue (8),
