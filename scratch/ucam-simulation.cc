@@ -316,14 +316,17 @@ void track_victims(NodeContainer victims, NodeContainer trackers)
 
 int main  (int argc, char *argv[])
 {
+	uint32_t seedValue = 1234;
 	LogComponentEnable ("UCAM", LOG_LEVEL_DEBUG);
 	LogComponentEnable ("EvalvidClient", LOG_LEVEL_INFO);
 	LogComponentEnable ("EvalvidServer", LOG_LEVEL_INFO);
 
 	CommandLine cmd;
 	cmd.AddValue ("netanim", "Enable generation of NetAnim files", enableNetAnim);
+	cmd.AddValue("seedValue", "random seed value.", seedValue);
 	cmd.Parse (argc, argv);
 
+	ns3::RngSeedManager::SetSeed(seedValue); //valor de seed para geração de números aleatórios
 	firstResponders.Create(1);
 	NodeContainer trackers;
 	trackers.Create(nTrackers);
