@@ -40,3 +40,4 @@ build/
 version.cache
 
 ucam-anim.xml
+*.txt
