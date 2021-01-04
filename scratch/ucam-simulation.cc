@@ -28,6 +28,13 @@
 #include "ns3/evalvid-client-server-helper.h"
 #include "ns3/netanim-module.h"
 #include "ns3/log.h"
+#include "ns3/basic-energy-source.h"
+#include "ns3/wifi-radio-energy-model.h"
+#include "ns3/basic-energy-source-helper.h"
+#include "ns3/wifi-radio-energy-model-helper.h"
+#include "ns3/energy-source-container.h"
+#include "ns3/device-energy-model-container.h"
+#include "ns3/event-id.h"
 
 #include <list>
 #include <unordered_map>
@@ -40,6 +47,25 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE ("UCAM");
 
+class TrackerInfo {
+public:
+	bool streaming_video;
+	list<Ptr<Node>> relay_chain;
+	EventId video_energy_event;
+	EventId prediction_energy_event;
+
+	TrackerInfo()
+	{
+		streaming_video = false;
+	}
+};
+
+const float MOBILITY_ENERGY_INTERVAL = 1; //seconds
+const float VIDEO_ENERGY_INTERVAL = 2;
+const float PREDICTION_ENERGY_INTERVAL = 1;
+const float VIDEO_ENERGY_COST = 500; //Joules
+const float PREDICTION_ENERGY_COST = 30; //Joules
+
 unsigned int simTime = 200;
 short nTrackers = 2;
 short nRelays = 62;
@@ -47,9 +73,8 @@ short nVictims = 2;
 bool enableNetAnim = false;
 NodeContainer firstResponders;
 list<Ptr<Node>> available_relays;
-unordered_map<unsigned int, list<Ptr<Node>>> relay_chains;
 unordered_map<unsigned int, Ptr<Node>> tracker_by_id;
-unordered_map<unsigned int, bool> streaming_video;
+unordered_map<unsigned int, TrackerInfo> trackers_info;
 float max_tx_radius = 50;
 float drone_speed = 10;
 float drone_height = 30;
@@ -144,6 +169,119 @@ void installMobility( NodeContainer firstResponders, NodeContainer drones, NodeC
 	mobility.Install (victims);
 }
 
+void UpdateMobilityEnergy(NodeContainer &drones)
+{
+	bool trigger = false;
+	Ptr<EnergySourceContainer> energy_container;
+
+	for (uint16_t i=0 ; i < drones.GetN(); i++)
+	{
+		Ptr<MobilityModel> drone_position = drones.Get(i)->GetObject<MobilityModel>();
+
+		Vector pos = drone_position->GetPosition ();
+
+		energy_container = drones.Get(i)->GetObject<EnergySourceContainer> ();
+		Ptr<BasicEnergySource> source = DynamicCast<BasicEnergySource>(energy_container->Get(0));
+
+		//Ordem de entrada dos parametros: posição X, posição Y, posição Z, tempo de atualização, velocidade
+		source->UpdateEnergyMobSource(pos.x,pos.y,pos.z, MOBILITY_ENERGY_INTERVAL, drone_speed);
+
+		float RE = source->GetRemainingEnergy();
+
+		if(RE == 0){
+			//trigger = true;
+		} 
+	}
+
+	if(trigger)
+	{
+		NodeContainer charg_nodes;
+
+		for (NodeContainer::Iterator j = drones.Begin ();j != drones.End (); ++j)
+		{  
+			Ptr<Node> object = *j;
+			Ptr<MobilityModel> drone_position = object->GetObject<MobilityModel> ();
+			Ptr<BasicEnergySource> source = object->GetObject<BasicEnergySource>();
+
+	    	if (source->GetRemainingEnergy() > 0){
+				charg_nodes.Add(object);
+			}
+		}
+
+		drones = charg_nodes;
+	}
+
+	//NS_LOG_UNCOND("Numero de nos ativos:");
+	//NS_LOG_UNCOND(drones.GetN());
+	Simulator::Schedule(Seconds(MOBILITY_ENERGY_INTERVAL), &UpdateMobilityEnergy, drones);
+}
+
+void update_video_energy(Ptr<Node> tracker){
+	Ptr<EnergySourceContainer> energy_container;
+	Ptr<BasicEnergySource> source;
+
+	energy_container = tracker->GetObject<EnergySourceContainer>();
+	source = DynamicCast<BasicEnergySource>(energy_container->Get(0));
+	source->ProcessEnergy(VIDEO_ENERGY_COST);
+	trackers_info[tracker->GetId()].video_energy_event = Simulator::Schedule(Seconds(VIDEO_ENERGY_INTERVAL), &update_video_energy, tracker);
+}
+
+void update_prediction_energy(Ptr<Node> tracker){
+	unsigned int id;
+	Ptr<EnergySourceContainer> energy_container;
+	Ptr<BasicEnergySource> source;
+
+	id = tracker->GetId();
+	energy_container = tracker->GetObject<EnergySourceContainer>();
+	source = DynamicCast<BasicEnergySource>(energy_container->Get(0));
+	source->ProcessEnergy(PREDICTION_ENERGY_COST);
+	trackers_info[id].prediction_energy_event = Simulator::Schedule(Seconds(PREDICTION_ENERGY_INTERVAL), &update_prediction_energy, tracker );
+}
+
+void initial_prediction_energy(NodeContainer trackers){
+	for(auto iter = trackers.Begin(); iter != trackers.End(); ++iter)
+	{
+		update_prediction_energy(*iter);
+	}
+}
+
+DeviceEnergyModelContainer installEnergy(NodeContainer drones){
+	/*
+	* Create and install energy source and a single basic radio energy model on
+	* the node using helpers.
+	*/
+	// source helper
+	BasicEnergySourceHelper basicSourceHelper;
+	basicSourceHelper.Set ("BasicEnergySourceInitialEnergyJ", DoubleValue (350e3));
+	// set update interval
+	basicSourceHelper.Set ("PeriodicEnergyUpdateInterval",
+						 TimeValue (Seconds (1.5)));
+	// install source
+	EnergySourceContainer sources = basicSourceHelper.Install (drones);
+
+	// device energy model helper
+	WifiRadioEnergyModelHelper radioEnergyHelper;
+	// set energy depletion callback
+	//WifiRadioEnergyModel::WifiRadioEnergyDepletionCallback callback =
+	//MakeCallback (&BasicEnergyDepletionTest::DepletionHandler, this);
+	//radioEnergyHelper.SetDepletionCallback (callback);
+	Ptr<Node> drone;
+	Ptr<MeshPointDevice> droneMeshInterface;
+	Ptr<NetDevice> droneInterface;
+	NetDeviceContainer devices;
+	for(auto iter = drones.Begin(); iter != drones.End(); ++iter)
+	{
+		drone = *iter;
+		droneMeshInterface = DynamicCast<MeshPointDevice> (drone->GetDevice(0));
+		droneInterface = droneMeshInterface->GetInterface(1);
+		devices.Add(droneInterface);
+	}
+	
+	// install on nodes
+	DeviceEnergyModelContainer deviceModels = radioEnergyHelper.Install (devices, sources);
+	return deviceModels;
+}
+
 void install_servers(NodeContainer trackers)
 {
 	ApplicationContainer servers;
@@ -194,6 +332,8 @@ void CourseChange(std::string context, Ptr<const MobilityModel> model)
 	size_t end;
 	string s_id;
 	unsigned int id;
+	Ptr<Node> tracker;
+	TrackerInfo info;
 
 	if(model->GetVelocity().GetLength() > 0)
 		return;
@@ -201,12 +341,19 @@ void CourseChange(std::string context, Ptr<const MobilityModel> model)
 	end = context.find("/", start);
 	s_id = context.substr(start, end - start);
 	id = stoul(s_id);
+	tracker = tracker_by_id[id];
+	info = trackers_info[id];
 
-	if(!streaming_video[id])
+	if(!info.streaming_video)
 	{
+		Simulator::Cancel(info.prediction_energy_event);
 		NS_LOG_DEBUG(context << " starting client");
-		stream_video(tracker_by_id[id]);
-		streaming_video[id] = true;
+		stream_video(tracker);
+		info.video_energy_event = Simulator::Schedule(
+											Seconds (VIDEO_ENERGY_INTERVAL),
+											&update_video_energy,
+											tracker);
+		info.streaming_video = true;
 	}
 }
 
@@ -215,7 +362,9 @@ void move_drone(Ptr<Node> drone, Vector destination, double n_vel) {
 	// get mobility model for drone
     Ptr<WaypointMobilityModel> mob = drone->GetObject<WaypointMobilityModel>();
     Vector m_position = mob->GetPosition();
-    double distance = CalculateDistance(destination, m_position);
+    double distance;
+
+	distance = CalculateDistance(destination, m_position);
 	// 1 meter of accuracy is acceptable
 	if(distance <= 1)
 		return;
@@ -300,6 +449,7 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 	Vector relay_position;
 	Vector relay_destination;
 	Ptr<Node> tracker;
+	TrackerInfo info;
 	list<Ptr<Node>>::iterator allocated_relay;
 	unsigned int relays_required;
 	unsigned int i;
@@ -310,7 +460,8 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 		tracker_mobility = tracker->GetObject<WaypointMobilityModel>();
 		tracker_position = tracker_mobility->GetPosition();
 		tracker_destination = tracker_mobility->GetNextWaypoint().position;
-		list<Ptr<Node>>& relay_chain = relay_chains[tracker->GetId()];
+		info = trackers_info[tracker->GetId()];
+		list<Ptr<Node>>& relay_chain = info.relay_chain;
 
 		if(CalculateDistance(tracker_destination, tracker_position) > drone_speed)
 		{
@@ -374,6 +525,7 @@ void track_victims(NodeContainer victims, NodeContainer trackers)
 		{
 			victim = *iter;
 			victim_position = victim->GetObject<MobilityModel>()->GetPosition();
+			victim_position.z = drone_height;
 			victims_coords.push_back(victim_position);
 		}
 	}
@@ -454,7 +606,8 @@ int main  (int argc, char *argv[])
 	relays.Create(nRelays);
 	NodeContainer victims;
 	victims.Create(nVictims);
-	NodeContainer nodes = NodeContainer (firstResponders, relays, trackers, victims);
+	NodeContainer drones = NodeContainer(trackers, relays);
+	NodeContainer nodes = NodeContainer (firstResponders, drones, victims);
 
 	YansWifiChannelHelper channel = YansWifiChannelHelper::Default ();
 	YansWifiPhyHelper phy = YansWifiPhyHelper::Default ();
@@ -484,7 +637,10 @@ int main  (int argc, char *argv[])
 		set_wifi_state (*iter, false);
 	}
 
-	installMobility (firstResponders, NodeContainer(relays, trackers), victims);
+	installMobility (firstResponders, drones, victims);
+	installEnergy (drones);
+	Simulator::Schedule(Seconds(MOBILITY_ENERGY_INTERVAL), &UpdateMobilityEnergy, drones);
+	Simulator::Schedule(Seconds(PREDICTION_ENERGY_INTERVAL), &initial_prediction_energy, trackers);
 
 	InternetStackHelper internetStack;
 	internetStack.Install (nodes);
@@ -498,7 +654,6 @@ int main  (int argc, char *argv[])
 	for(auto iter = trackers.Begin(); iter != trackers.End(); ++iter)
 	{
 		Ptr<Node> tracker = *iter;
-		relay_chains[tracker->GetId()] = list<Ptr<Node>>();
 		tracker_by_id[tracker->GetId()] = tracker;
 	}
 
