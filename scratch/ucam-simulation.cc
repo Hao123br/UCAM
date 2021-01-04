@@ -449,7 +449,6 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 	Vector relay_position;
 	Vector relay_destination;
 	Ptr<Node> tracker;
-	TrackerInfo info;
 	list<Ptr<Node>>::iterator allocated_relay;
 	unsigned int relays_required;
 	unsigned int i;
@@ -460,8 +459,7 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 		tracker_mobility = tracker->GetObject<WaypointMobilityModel>();
 		tracker_position = tracker_mobility->GetPosition();
 		tracker_destination = tracker_mobility->GetNextWaypoint().position;
-		info = trackers_info[tracker->GetId()];
-		list<Ptr<Node>>& relay_chain = info.relay_chain;
+		list<Ptr<Node>>& relay_chain = trackers_info[tracker->GetId()].relay_chain;
 
 		if(CalculateDistance(tracker_destination, tracker_position) > drone_speed)
 		{
