@@ -333,7 +333,6 @@ void CourseChange(std::string context, Ptr<const MobilityModel> model)
 	string s_id;
 	unsigned int id;
 	Ptr<Node> tracker;
-	TrackerInfo info;
 
 	if(model->GetVelocity().GetLength() > 0)
 		return;
@@ -342,7 +341,7 @@ void CourseChange(std::string context, Ptr<const MobilityModel> model)
 	s_id = context.substr(start, end - start);
 	id = stoul(s_id);
 	tracker = tracker_by_id[id];
-	info = trackers_info[id];
+	TrackerInfo& info = trackers_info[id];
 
 	if(!info.streaming_video)
 	{
