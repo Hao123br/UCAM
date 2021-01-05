@@ -66,7 +66,7 @@ const float PREDICTION_ENERGY_INTERVAL = 1;
 const float VIDEO_ENERGY_COST = 500; //Joules
 const float PREDICTION_ENERGY_COST = 30; //Joules
 
-unsigned int simTime = 200;
+unsigned int simTime = 300;
 short nTrackers = 2;
 short nRelays = 62;
 short nVictims = 2;
