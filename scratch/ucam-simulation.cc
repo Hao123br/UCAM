@@ -75,7 +75,7 @@ NodeContainer firstResponders;
 list<Ptr<Node>> available_relays;
 unordered_map<unsigned int, Ptr<Node>> tracker_by_id;
 unordered_map<unsigned int, TrackerInfo> trackers_info;
-float max_tx_radius = 50;
+float max_tx_radius = 90;
 float drone_speed = 10;
 float drone_height = 30;
 std::string ns3_dir;
@@ -606,7 +606,10 @@ int main  (int argc, char *argv[])
 	NodeContainer drones = NodeContainer(trackers, relays);
 	NodeContainer nodes = NodeContainer (firstResponders, drones, victims);
 
-	YansWifiChannelHelper channel = YansWifiChannelHelper::Default ();
+	//YansWifiChannelHelper channel = YansWifiChannelHelper::Default ();
+	YansWifiChannelHelper channel;
+	channel.SetPropagationDelay ("ns3::ConstantSpeedPropagationDelayModel");
+	channel.AddPropagationLoss ("ns3::RangePropagationLossModel","MaxRange",DoubleValue(175));
 	YansWifiPhyHelper phy = YansWifiPhyHelper::Default ();
 	phy.SetChannel (channel.Create ());
 
