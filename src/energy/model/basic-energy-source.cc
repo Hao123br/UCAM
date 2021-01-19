@@ -240,7 +240,7 @@ void BasicEnergySource::ProcessEnergy(double x){
   {
      m_remainingEnergyJ -= x;
   }else{
-    NS_LOG_UNCOND("ENERGIA BAIXA");
+    NS_LOG_WARN("ENERGIA INSUFICIENTE");
   }
 
 }
@@ -283,9 +283,8 @@ BasicEnergySource::UpdateEnergyMobSource (double x, double y, double z, float ti
   float part2 = (AtualPosY - y)*(AtualPosY - y);
    //NS_LOG_UNCOND(part2);
 
-  distance = sqrt(part1 + part2); 
-  NS_LOG_UNCOND("distancia percorrida");
-  NS_LOG_UNCOND(distance);
+  distance = sqrt(part1 + part2);
+  NS_LOG_DEBUG("distancia percorrida: " << distance);
 
   float updown = z - AtualPosZ;
 
@@ -303,8 +302,7 @@ BasicEnergySource::UpdateEnergyMobSource (double x, double y, double z, float ti
 
   //Considerando hovering como uma variação muito baixa de posicionamento, neste caso igual ou abaixo de meio metro
   if(distance > 0.5){
-    NS_LOG_UNCOND("mobilidade feita, distacia percorrida no tempo:");
-    NS_LOG_UNCOND(distance);
+    NS_LOG_DEBUG("mobilidade feita, distacia percorrida no tempo: " << distance);
     //Implementar calculo de P * (D/V) || V pode ser abstraido caso necessario como D/T
     //ou seja o espaço percorrido no intervalo de tempo da tualização
     //P = Consumo de velocidade constante (Considerando o móduo de velocidade constante, adaptar caso contrario)
@@ -319,8 +317,8 @@ BasicEnergySource::UpdateEnergyMobSource (double x, double y, double z, float ti
 
 
 
-  }else{
-    NS_LOG_UNCOND("UAV em hovering");
+  }else if(AtualPosZ > 0){
+    NS_LOG_DEBUG("UAV em hovering");
 
     //p =??
 
@@ -334,11 +332,12 @@ BasicEnergySource::UpdateEnergyMobSource (double x, double y, double z, float ti
     energy_spent += gasto;
     //NS_LOG_UNCOND(gasto);
 
-
+  }else{
+    NS_LOG_DEBUG("UAV no solo");
   }
 
   if(updown !=0){
-    NS_LOG_UNCOND("UAV SUBINDO OU DESCENDO");
+    NS_LOG_DEBUG("UAV SUBINDO OU DESCENDO");
 
     if(updown > 0){
       //NS_LOG_UNCOND("UAV subindo");
@@ -360,8 +359,7 @@ BasicEnergySource::UpdateEnergyMobSource (double x, double y, double z, float ti
 
   
 
-  NS_LOG_UNCOND("ENERGIA INICIAL:");
-  NS_LOG_UNCOND(GetInitialEnergy());
+  NS_LOG_DEBUG("ENERGIA INICIAL: " << GetInitialEnergy());
 
   if (m_remainingEnergyJ >= energy_spent)
   {
@@ -372,11 +370,9 @@ BasicEnergySource::UpdateEnergyMobSource (double x, double y, double z, float ti
 
  
 
-  NS_LOG_UNCOND("ENERGIA RESTANTE:");
-  NS_LOG_UNCOND(m_remainingEnergyJ);
+  NS_LOG_DEBUG("ENERGIA RESTANTE:" << m_remainingEnergyJ);
 
-  NS_LOG_UNCOND("Energia gasta:");
-  NS_LOG_UNCOND(energy_spent);
+  NS_LOG_DEBUG("Energia gasta: " << energy_spent);
 
   if (!m_depleted && m_remainingEnergyJ <= m_lowBatteryTh * m_initialEnergyJ)
     {

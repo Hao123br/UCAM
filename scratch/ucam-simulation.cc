@@ -585,6 +585,7 @@ int main  (int argc, char *argv[])
 	LogComponentEnable ("UCAM", LOG_LEVEL_DEBUG);
 	LogComponentEnable ("EvalvidClient", LOG_LEVEL_INFO);
 	LogComponentEnable ("EvalvidServer", LOG_LEVEL_INFO);
+	LogComponentEnable ("BasicEnergySource", LOG_LEVEL_DEBUG);
 
 	CommandLine cmd;
 	cmd.AddValue ("netanim", "Enable generation of NetAnim files", enableNetAnim);
