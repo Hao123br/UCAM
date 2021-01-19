@@ -150,7 +150,7 @@ void installMobility( NodeContainer firstResponders, NodeContainer drones, NodeC
 	mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
 								   "MinX", DoubleValue (930.0),
 								   "MinY", DoubleValue (930.0),
-								   "Z", DoubleValue (drone_height),
+								   "Z", DoubleValue (0),
 								   "DeltaX", DoubleValue (20.0),
 								   "DeltaY", DoubleValue (20.0),
 								   "GridWidth", UintegerValue (8),
