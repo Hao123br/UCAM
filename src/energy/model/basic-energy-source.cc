@@ -294,7 +294,7 @@ BasicEnergySource::UpdateEnergyMobSource (double x, double y, double z, float ti
 
   
 
-  float energy_spent;
+  float energy_spent = 0;
 
   //float tempo_passado = tempo_atual;
   //float tempo_atual = holder.GetSeconds();
