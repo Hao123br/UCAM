@@ -247,7 +247,7 @@ void BasicEnergySource::ProcessEnergy(double x){
 
 //Calculo de energia por mobilidade
 //Ordem de entrada dos parametros: posição X, posição Y, posição Z, tempo de atualização, velocidade
-void
+float
 BasicEnergySource::UpdateEnergyMobSource (double x, double y, double z, float time, float speed)
 {
   NS_LOG_FUNCTION (this);
@@ -269,7 +269,7 @@ BasicEnergySource::UpdateEnergyMobSource (double x, double y, double z, float ti
     //  NS_LOG_UNCOND("X" << AtualPosX);
     //  NS_LOG_UNCOND("y" << AtualPosY);
     //  NS_LOG_UNCOND("Z" << AtualPosZ);
-    return;
+    return 0;
   }
 
 
@@ -396,8 +396,7 @@ BasicEnergySource::UpdateEnergyMobSource (double x, double y, double z, float ti
                                                  this);
     }
 
-
-
+	return energy_spent;
 }
 
 /*

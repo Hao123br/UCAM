@@ -83,7 +83,7 @@ public:
   /**
    * Implements UpdateEnergyMobSource.
    */
-  virtual void UpdateEnergyMobSource (double, double, double, float, float);
+  virtual float UpdateEnergyMobSource (double, double, double, float, float);
 
   /**
    * Implements recharge function.
