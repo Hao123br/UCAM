@@ -65,6 +65,8 @@ const float VIDEO_ENERGY_INTERVAL = 2;
 const float PREDICTION_ENERGY_INTERVAL = 1;
 const float VIDEO_ENERGY_COST = 500; //Joules
 const float PREDICTION_ENERGY_COST = 30; //Joules
+const bool WIFI_ON = true;
+const bool WIFI_OFF = false;
 
 unsigned int simTime = 300;
 short nTrackers = 2;
@@ -496,7 +498,7 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 			relay_chain.push_back(*allocated_relay);
 			available_relays.erase(allocated_relay);
 			move_drone(*allocated_relay, relay_destination, drone_speed);
-			set_wifi_state((*allocated_relay)->GetDevice(0), true);
+			set_wifi_state((*allocated_relay)->GetDevice(0), WIFI_ON);
 			++i;
 		}
 	}
@@ -635,7 +637,7 @@ int main  (int argc, char *argv[])
 	//start relays in off state
 	for(auto iter = relayDevices.Begin(); iter != relayDevices.End(); ++iter)
 	{
-		set_wifi_state (*iter, false);
+		set_wifi_state (*iter, WIFI_OFF);
 	}
 
 	installMobility (firstResponders, drones, victims);
