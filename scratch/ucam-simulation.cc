@@ -60,6 +60,44 @@ public:
 	}
 };
 
+class UAVEnergyTrace {
+	bool is_relay;
+public:
+	std::ofstream mobility;
+	std::ofstream prediction;
+	std::ofstream video;
+	std::ofstream comms;
+
+	UAVEnergyTrace(bool r)
+	:is_relay{r}
+	{
+		std::string prefix = is_relay ? "relay-" : "tracker-";
+
+		mobility.open(prefix + "mobility-energy.txt", std::ofstream::out | std::ofstream::trunc);
+		comms.open(prefix + "comms-energy.txt", std::ofstream::out | std::ofstream::trunc);
+
+		if(!is_relay)
+		{
+			prediction.open(prefix + "prediction-energy.txt", std::ofstream::out | std::ofstream::trunc);
+			video.open(prefix + "video-energy.txt", std::ofstream::out | std::ofstream::trunc);
+		}
+	}
+
+	~UAVEnergyTrace()
+	{
+		mobility.close();
+		comms.close();
+
+		if(!is_relay)
+		{
+			prediction.close();
+			video.close();
+		}
+	}
+};
+
+enum class EnergyType { mobility, prediction, video, comms};
+
 const float MOBILITY_ENERGY_INTERVAL = 1; //seconds
 const float VIDEO_ENERGY_INTERVAL = 2;
 const float PREDICTION_ENERGY_INTERVAL = 1;
@@ -67,6 +105,8 @@ const float VIDEO_ENERGY_COST = 500; //Joules
 const float PREDICTION_ENERGY_COST = 30; //Joules
 const bool WIFI_ON = true;
 const bool WIFI_OFF = false;
+const bool TYPE_RELAY = true;
+const bool TYPE_TRACKER = false;
 
 unsigned int simTime = 300;
 short nTrackers = 2;
@@ -82,6 +122,8 @@ float drone_speed = 10;
 float drone_height = 30;
 std::string ns3_dir;
 std::ofstream victims_positions_log;
+UAVEnergyTrace tracker_energy_trace(TYPE_TRACKER);
+UAVEnergyTrace relay_energy_trace(TYPE_RELAY);
 
 std::string exec(std::string cmd)
 {
@@ -171,72 +213,98 @@ void installMobility( NodeContainer firstResponders, NodeContainer drones, NodeC
 	mobility.Install (victims);
 }
 
-void UpdateMobilityEnergy(NodeContainer &drones)
+void write_energy_trace(EnergyType eType, bool is_relay, unsigned int id, float energy_spent, float remaining_energy)
 {
-	bool trigger = false;
-	Ptr<EnergySourceContainer> energy_container;
+	double currentTime = Simulator::Now().GetSeconds();
+	UAVEnergyTrace& eTrace = is_relay ? relay_energy_trace : tracker_energy_trace;
+	std::ostringstream message;
 
-	for (uint16_t i=0 ; i < drones.GetN(); i++)
+	message << currentTime
+			<< " " << id
+			<< " " << energy_spent
+			<< " " << remaining_energy
+			<< "\n";
+
+	switch(eType)
 	{
-		Ptr<MobilityModel> drone_position = drones.Get(i)->GetObject<MobilityModel>();
+		case EnergyType::mobility:
+			eTrace.mobility << message.str();
+			break;
 
-		Vector pos = drone_position->GetPosition ();
+		case EnergyType::prediction:
+			eTrace.prediction << message.str();
+			break;
 
-		energy_container = drones.Get(i)->GetObject<EnergySourceContainer> ();
-		Ptr<BasicEnergySource> source = DynamicCast<BasicEnergySource>(energy_container->Get(0));
+		case EnergyType::video:
+			eTrace.video << message.str();
+			break;
+
+		case EnergyType::comms:
+			eTrace.comms << message.str();
+			break;
+	}
+}
+
+void UpdateMobilityEnergy(NodeContainer uavs, bool is_relay)
+{
+	Ptr<Node> uav;
+	unsigned int id;
+	Vector pos;
+	Ptr<EnergySourceContainer> energy_container;
+	Ptr<BasicEnergySource> source;
+	float energy_spent, remaining_energy;
+
+	for (auto iter = uavs.Begin(); iter != uavs.End(); iter++)
+	{
+		uav = *iter;
+
+		id = uav->GetId();
+		pos = uav->GetObject<MobilityModel>()->GetPosition ();
+
+		energy_container = uav->GetObject<EnergySourceContainer> ();
+		source = DynamicCast<BasicEnergySource>(energy_container->Get(0));
 
 		//Ordem de entrada dos parametros: posição X, posição Y, posição Z, tempo de atualização, velocidade
-		source->UpdateEnergyMobSource(pos.x,pos.y,pos.z, MOBILITY_ENERGY_INTERVAL, drone_speed);
+		energy_spent = source->UpdateEnergyMobSource(pos.x,pos.y,pos.z, MOBILITY_ENERGY_INTERVAL, drone_speed);
+		remaining_energy = source->GetRemainingEnergy();
 
-		float RE = source->GetRemainingEnergy();
-
-		if(RE == 0){
-			//trigger = true;
-		} 
+		write_energy_trace(EnergyType::mobility, is_relay, id, energy_spent, remaining_energy);
 	}
 
-	if(trigger)
-	{
-		NodeContainer charg_nodes;
-
-		for (NodeContainer::Iterator j = drones.Begin ();j != drones.End (); ++j)
-		{  
-			Ptr<Node> object = *j;
-			Ptr<MobilityModel> drone_position = object->GetObject<MobilityModel> ();
-			Ptr<BasicEnergySource> source = object->GetObject<BasicEnergySource>();
-
-	    	if (source->GetRemainingEnergy() > 0){
-				charg_nodes.Add(object);
-			}
-		}
-
-		drones = charg_nodes;
-	}
-
-	//NS_LOG_UNCOND("Numero de nos ativos:");
-	//NS_LOG_UNCOND(drones.GetN());
-	Simulator::Schedule(Seconds(MOBILITY_ENERGY_INTERVAL), &UpdateMobilityEnergy, drones);
+	Simulator::Schedule(Seconds(MOBILITY_ENERGY_INTERVAL), &UpdateMobilityEnergy, uavs, is_relay);
 }
 
 void update_video_energy(Ptr<Node> tracker){
+	unsigned int id;
 	Ptr<EnergySourceContainer> energy_container;
 	Ptr<BasicEnergySource> source;
+	float remaining_energy;
 
+	id = tracker->GetId();
 	energy_container = tracker->GetObject<EnergySourceContainer>();
 	source = DynamicCast<BasicEnergySource>(energy_container->Get(0));
 	source->ProcessEnergy(VIDEO_ENERGY_COST);
-	trackers_info[tracker->GetId()].video_energy_event = Simulator::Schedule(Seconds(VIDEO_ENERGY_INTERVAL), &update_video_energy, tracker);
+
+	remaining_energy = source->GetRemainingEnergy();
+	write_energy_trace(EnergyType::video, TYPE_TRACKER, id, VIDEO_ENERGY_COST, remaining_energy);
+
+	trackers_info[id].video_energy_event = Simulator::Schedule(Seconds(VIDEO_ENERGY_INTERVAL), &update_video_energy, tracker);
 }
 
 void update_prediction_energy(Ptr<Node> tracker){
 	unsigned int id;
 	Ptr<EnergySourceContainer> energy_container;
 	Ptr<BasicEnergySource> source;
+	float remaining_energy;
 
 	id = tracker->GetId();
 	energy_container = tracker->GetObject<EnergySourceContainer>();
 	source = DynamicCast<BasicEnergySource>(energy_container->Get(0));
 	source->ProcessEnergy(PREDICTION_ENERGY_COST);
+
+	remaining_energy = source->GetRemainingEnergy();
+	write_energy_trace(EnergyType::prediction, TYPE_TRACKER, id, PREDICTION_ENERGY_COST, remaining_energy);
+
 	trackers_info[id].prediction_energy_event = Simulator::Schedule(Seconds(PREDICTION_ENERGY_INTERVAL), &update_prediction_energy, tracker );
 }
 
@@ -642,7 +710,8 @@ int main  (int argc, char *argv[])
 
 	installMobility (firstResponders, drones, victims);
 	installEnergy (drones);
-	Simulator::Schedule(Seconds(MOBILITY_ENERGY_INTERVAL), &UpdateMobilityEnergy, drones);
+	Simulator::Schedule(Seconds(MOBILITY_ENERGY_INTERVAL), &UpdateMobilityEnergy, trackers, TYPE_TRACKER);
+	Simulator::Schedule(Seconds(MOBILITY_ENERGY_INTERVAL), &UpdateMobilityEnergy, relays, TYPE_RELAY);
 	Simulator::Schedule(Seconds(PREDICTION_ENERGY_INTERVAL), &initial_prediction_energy, trackers);
 
 	InternetStackHelper internetStack;
