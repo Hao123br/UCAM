@@ -35,6 +35,7 @@
 #include "ns3/energy-source-container.h"
 #include "ns3/device-energy-model-container.h"
 #include "ns3/event-id.h"
+#include "ns3/assert.h"
 
 #include <list>
 #include <unordered_map>
@@ -213,7 +214,7 @@ void installMobility( NodeContainer firstResponders, NodeContainer drones, NodeC
 	mobility.Install (victims);
 }
 
-void write_energy_trace(EnergyType eType, bool is_relay, unsigned int id, float energy_spent, float remaining_energy)
+void write_energy_trace(EnergyType eType, bool is_relay, unsigned int id, double energy_spent, double remaining_energy)
 {
 	double currentTime = Simulator::Now().GetSeconds();
 	UAVEnergyTrace& eTrace = is_relay ? relay_energy_trace : tracker_energy_trace;
@@ -245,6 +246,36 @@ void write_energy_trace(EnergyType eType, bool is_relay, unsigned int id, float 
 	}
 }
 
+void write_comms_energy_trace(NodeContainer uavs, DeviceEnergyModelContainer emodels, bool is_relay)
+{
+	Ptr<Node> uav;
+	unsigned int id;
+	Ptr<WifiRadioEnergyModel> wifi_energy_model;
+	Ptr<EnergySourceContainer> energy_container;
+	Ptr<BasicEnergySource> source;
+	double energy_spent, remaining_energy;
+
+	NS_ASSERT (uavs.GetN() == emodels.GetN());
+
+	auto uav_iter = uavs.Begin();
+	auto emodel_iter = emodels.Begin();
+	for (; uav_iter != uavs.End(); uav_iter++, emodel_iter++)
+	{
+		uav = *uav_iter;
+		wifi_energy_model = DynamicCast<WifiRadioEnergyModel> (*emodel_iter);
+
+		id = uav->GetId();
+
+		energy_spent = wifi_energy_model->GetTotalEnergyConsumption ();
+
+		energy_container = uav->GetObject<EnergySourceContainer> ();
+		source = DynamicCast<BasicEnergySource> (energy_container->Get(0));
+		remaining_energy = source->GetRemainingEnergy ();
+
+		write_energy_trace(EnergyType::comms, is_relay, id, energy_spent, remaining_energy);
+	}
+}
+
 void UpdateMobilityEnergy(NodeContainer uavs, bool is_relay)
 {
 	Ptr<Node> uav;
@@ -252,7 +283,7 @@ void UpdateMobilityEnergy(NodeContainer uavs, bool is_relay)
 	Vector pos;
 	Ptr<EnergySourceContainer> energy_container;
 	Ptr<BasicEnergySource> source;
-	float energy_spent, remaining_energy;
+	double energy_spent, remaining_energy;
 
 	for (auto iter = uavs.Begin(); iter != uavs.End(); iter++)
 	{
@@ -278,7 +309,7 @@ void update_video_energy(Ptr<Node> tracker){
 	unsigned int id;
 	Ptr<EnergySourceContainer> energy_container;
 	Ptr<BasicEnergySource> source;
-	float remaining_energy;
+	double remaining_energy;
 
 	id = tracker->GetId();
 	energy_container = tracker->GetObject<EnergySourceContainer>();
@@ -295,7 +326,7 @@ void update_prediction_energy(Ptr<Node> tracker){
 	unsigned int id;
 	Ptr<EnergySourceContainer> energy_container;
 	Ptr<BasicEnergySource> source;
-	float remaining_energy;
+	double remaining_energy;
 
 	id = tracker->GetId();
 	energy_container = tracker->GetObject<EnergySourceContainer>();
@@ -674,8 +705,7 @@ int main  (int argc, char *argv[])
 	relays.Create(nRelays);
 	NodeContainer victims;
 	victims.Create(nVictims);
-	NodeContainer drones = NodeContainer(trackers, relays);
-	NodeContainer nodes = NodeContainer (firstResponders, drones, victims);
+	NodeContainer nodes = NodeContainer (firstResponders, trackers, relays, victims);
 
 	//YansWifiChannelHelper channel = YansWifiChannelHelper::Default ();
 	YansWifiChannelHelper channel;
@@ -708,8 +738,13 @@ int main  (int argc, char *argv[])
 		set_wifi_state (*iter, WIFI_OFF);
 	}
 
-	installMobility (firstResponders, drones, victims);
-	installEnergy (drones);
+	installMobility (firstResponders, NodeContainer(trackers, relays), victims);
+
+	DeviceEnergyModelContainer tracker_emodels;
+	DeviceEnergyModelContainer relay_emodels;
+	tracker_emodels = installEnergy (trackers);
+	relay_emodels = installEnergy (relays);
+
 	Simulator::Schedule(Seconds(MOBILITY_ENERGY_INTERVAL), &UpdateMobilityEnergy, trackers, TYPE_TRACKER);
 	Simulator::Schedule(Seconds(MOBILITY_ENERGY_INTERVAL), &UpdateMobilityEnergy, relays, TYPE_RELAY);
 	Simulator::Schedule(Seconds(PREDICTION_ENERGY_INTERVAL), &initial_prediction_energy, trackers);
@@ -779,6 +814,10 @@ int main  (int argc, char *argv[])
 
 	Simulator::Stop (Seconds (simTime));
 	Simulator::Run ();
+
+	write_comms_energy_trace (trackers, tracker_emodels, TYPE_TRACKER);
+	write_comms_energy_trace (relays, relay_emodels, TYPE_RELAY);
+
 	Simulator::Destroy ();
 	return 0;
 }
