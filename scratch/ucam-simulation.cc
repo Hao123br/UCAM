@@ -54,10 +54,17 @@ public:
 	list<Ptr<Node>> relay_chain;
 	EventId video_energy_event;
 	EventId prediction_energy_event;
+	bool is_victim_visible;
+	double last_update_time;
+	double total_tracking_time;
+	Ptr<Node> tracked_victim;
 
 	TrackerInfo()
 	{
 		streaming_video = false;
+		is_victim_visible = false;
+		last_update_time = 0;
+		total_tracking_time = 0;
 	}
 };
 
@@ -276,6 +283,28 @@ void write_comms_energy_trace(NodeContainer uavs, DeviceEnergyModelContainer emo
 	}
 }
 
+void write_track_time_trace(NodeContainer trackers)
+{
+	std::ofstream track_time_trace;
+	Ptr<Node> tracker;
+	Ptr<Node> victim;
+	unsigned int id;
+	TrackerInfo* info;
+
+	track_time_trace.open("track_time_trace.txt", std::ofstream::out | std::ofstream::trunc);
+
+	for (auto iter = trackers.Begin(); iter != trackers.End(); iter++)
+	{
+		tracker = *iter;
+		id = tracker->GetId();
+		info = &trackers_info[id];
+		victim = info->tracked_victim;
+		track_time_trace << id << " " << victim->GetId() << " " << info->total_tracking_time << "\n";
+	}
+
+	track_time_trace.close();
+}
+
 void UpdateMobilityEnergy(NodeContainer uavs, bool is_relay)
 {
 	Ptr<Node> uav;
@@ -383,6 +412,50 @@ DeviceEnergyModelContainer installEnergy(NodeContainer drones){
 	return deviceModels;
 }
 
+Vector2D to_2d_vector(Vector v)
+{
+	Vector2D v_2d;
+
+	v_2d.x = v.x;
+	v_2d.y = v.y;
+
+	return v_2d;
+}
+
+void update_tracking_time(Ptr<const MobilityModel> model, TrackerInfo& info)
+{
+	const double tracking_radius = 13; //for a height of 30m
+	Vector tracker_position;
+	Vector tracked_victim_position;
+	double now;
+	double distance;
+	double interval;
+
+	now = Simulator::Now().GetSeconds();
+
+	tracker_position = model->GetPosition();
+	tracked_victim_position = info.tracked_victim->GetObject<MobilityModel> ()->GetPosition ();
+
+	distance = CalculateDistance (to_2d_vector (tracker_position), to_2d_vector (tracked_victim_position));
+	if (info.is_victim_visible)
+	{
+		interval = now - info.last_update_time;
+		info.total_tracking_time += interval;
+		if (distance > tracking_radius)
+		{
+			info.is_victim_visible = false;
+		}
+	}
+	else
+	{
+		if (distance <= tracking_radius)
+		{
+			info.is_victim_visible = true;
+		}
+	}
+	info.last_update_time = now;
+}
+
 void install_servers(NodeContainer trackers)
 {
 	ApplicationContainer servers;
@@ -427,24 +500,35 @@ void stream_video(Ptr<Node> tracker)
 	client.Stop(Seconds (simTime-1));
 }
 
-void CourseChange(std::string context, Ptr<const MobilityModel> model)
+unsigned int id_from_context(std::string context)
 {
 	size_t start = 10;
 	size_t end;
 	string s_id;
 	unsigned int id;
-	Ptr<Node> tracker;
-
-	if(model->GetVelocity().GetLength() > 0)
-		return;
 
 	end = context.find("/", start);
 	s_id = context.substr(start, end - start);
 	id = stoul(s_id);
-	tracker = tracker_by_id[id];
+
+	return id;
+}
+
+void CourseChange(std::string context, Ptr<const MobilityModel> model)
+{
+	unsigned int id;
+	Ptr<Node> tracker;
+
+	id = id_from_context (context);
 	TrackerInfo& info = trackers_info[id];
 
-	if(!info.streaming_video)
+	update_tracking_time(model, info);
+
+	if (model->GetVelocity().GetLength() > 0)
+		return;
+
+	tracker = tracker_by_id[id];
+	if (!info.streaming_video)
 	{
 		Simulator::Cancel(info.prediction_energy_event);
 		NS_LOG_DEBUG(context << " starting client");
@@ -629,11 +713,14 @@ void track_victims(NodeContainer victims, NodeContainer trackers)
 	}
 
 	available_trackers.assign (trackers.Begin(), trackers.End());
+	auto iter = victims.Begin();
 	for(Vector victim_position : victims_coords)
 	{
 		nearest_tracker = closest_drone(victim_position, available_trackers);
 		move_drone(*nearest_tracker, victim_position, drone_speed);
 		available_trackers.erase(nearest_tracker);
+		victim = *iter++;
+		trackers_info[(*nearest_tracker)->GetId()].tracked_victim = victim;
 	}
 	Simulator::Schedule(Seconds(2), track_victims, victims, trackers);
 }
@@ -817,6 +904,7 @@ int main  (int argc, char *argv[])
 
 	write_comms_energy_trace (trackers, tracker_emodels, TYPE_TRACKER);
 	write_comms_energy_trace (relays, relay_emodels, TYPE_RELAY);
+	write_track_time_trace(trackers);
 
 	Simulator::Destroy ();
 	return 0;
