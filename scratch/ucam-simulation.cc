@@ -412,7 +412,7 @@ DeviceEnergyModelContainer installEnergy(NodeContainer drones){
 	return deviceModels;
 }
 
-Vector2D to_2d_vector(Vector v)
+Vector2D to_vector2d(Vector v)
 {
 	Vector2D v_2d;
 
@@ -436,7 +436,7 @@ void update_tracking_time(Ptr<const MobilityModel> model, TrackerInfo& info)
 	tracker_position = model->GetPosition();
 	tracked_victim_position = info.tracked_victim->GetObject<MobilityModel> ()->GetPosition ();
 
-	distance = CalculateDistance (to_2d_vector (tracker_position), to_2d_vector (tracked_victim_position));
+	distance = CalculateDistance (to_vector2d (tracker_position), to_vector2d (tracked_victim_position));
 	if (info.is_victim_visible)
 	{
 		interval = now - info.last_update_time;
@@ -622,21 +622,75 @@ Vector calculate_future_position(Ptr<WaypointMobilityModel> mobility)
 	return future_position;
 }
 
+unsigned int calculate_relays_required(Vector fr_position, Vector tracker_position){
+	double tdistance, theight, root, relays;
+
+	tdistance = CalculateDistance(to_vector2d(fr_position), to_vector2d(tracker_position));
+	theight = tracker_position.z;
+
+	root = sqrt( pow(max_tx_radius, 2) - pow(theight, 2) );
+	relays = (tdistance - root)/max_tx_radius;
+
+	return relays>0 ? (int) ceil(relays) : 0;
+}
+
+double calculate_relay_spacing(unsigned int nrelays, Vector fr_position, Vector tracker_position){
+	double tdistance, theight, root;
+
+	tdistance = CalculateDistance(to_vector2d(fr_position), to_vector2d(tracker_position));
+	theight = tracker_position.z;
+
+	//corner case where the last relay can go past the fr_position
+	if(tdistance < nrelays * theight)
+		return tdistance / nrelays;
+
+	if(nrelays == 1)
+	{
+		return (pow(tdistance,2) + pow(theight,2)) / (2*tdistance);
+	}
+	else
+	{
+		root = sqrt( pow(tdistance,2) - pow(theight,2) * (pow(nrelays,2) - 1) );
+		return (tdistance * nrelays - root) / (pow(nrelays,2) - 1);
+	}
+}
+
+Vector2D subtract_vectors(Vector2D v1, Vector2D v2){
+	Vector2D result;
+
+	result.x = v1.x - v2.x;
+	result.y = v1.y - v2.y;
+
+	return result;
+}
+
+Vector2D unit_vector(Vector2D v){
+	double lenght;
+	Vector2D unit_vector;
+
+	lenght = v.GetLength();
+	unit_vector.x = v.x / lenght;
+	unit_vector.y = v.y / lenght;
+
+	return unit_vector;
+}
+
 void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
-	double distance;
-	double inter_drone_distance;
-	double x,y,z;
+	double relay_spacing;
+	double x,y;
 	Ptr<WaypointMobilityModel> tracker_mobility;
-	Vector fr_position = firstResponders->GetObject<MobilityModel>()->GetPosition();
+	Vector fr_position;
 	Vector tracker_position;
 	Vector tracker_destination;
-	Vector relay_position;
 	Vector relay_destination;
+	Vector2D distance;
+	Vector2D direction;
 	Ptr<Node> tracker;
 	list<Ptr<Node>>::iterator allocated_relay;
 	unsigned int relays_required;
 	unsigned int i;
 
+	fr_position = firstResponders->GetObject<MobilityModel>()->GetPosition();
 	for(auto iter = trackers.Begin(); iter != trackers.End(); ++iter)
 	{
 		tracker = *iter;
@@ -651,23 +705,27 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 			tracker_position = calculate_future_position(tracker_mobility);
 		}
 
-		distance = CalculateDistance(fr_position, tracker_position);
-		relays_required = (int) ceil(distance / max_tx_radius) - 1;
+		relays_required = calculate_relays_required(fr_position, tracker_position);
 
 		//TODO: implement algorithm to free unnecessary relays
 		if(relays_required < relay_chain.size())
 			relays_required = relay_chain.size();
 
-		inter_drone_distance = distance / (relays_required + 1);
-		x = inter_drone_distance * (tracker_position.x - fr_position.x) / distance;
-		y = inter_drone_distance * (tracker_position.y - fr_position.y) / distance;
-		z = inter_drone_distance * (tracker_position.z - fr_position.z) / distance;
+		if(relays_required == 0)
+			continue;
+
+		relay_spacing = calculate_relay_spacing (relays_required, fr_position, tracker_position);
+		distance = subtract_vectors (to_vector2d(tracker_position), to_vector2d(fr_position));
+		direction = unit_vector (distance);
+
+		x = relay_spacing * direction.x;
+		y = relay_spacing * direction.y;
 		i = 1;
 		for(auto relay : relay_chain)
 		{
 			relay_destination.x = tracker_position.x - i * x;
 			relay_destination.y = tracker_position.y - i * y;
-			relay_destination.z = tracker_position.z - i * z;
+			relay_destination.z = tracker_position.z;
 			move_drone(relay, relay_destination, drone_speed);
 			++i;
 		}
@@ -676,7 +734,7 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 		{
 			relay_destination.x = tracker_position.x - i * x;
 			relay_destination.y = tracker_position.y - i * y;
-			relay_destination.z = tracker_position.z - i * z;
+			relay_destination.z = tracker_position.z;
 			allocated_relay = closest_drone(relay_destination, available_relays);
 			relay_chain.push_back(*allocated_relay);
 			available_relays.erase(allocated_relay);
@@ -696,6 +754,8 @@ void track_victims(NodeContainer victims, NodeContainer trackers)
 	Ptr<Node> victim;
 	Vector victim_position;
 	std::vector<Vector> victims_coords;
+
+	NS_ASSERT(drone_height <= max_tx_radius);
 
 	if(now >= 10)
 	{
