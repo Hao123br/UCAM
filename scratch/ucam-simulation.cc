@@ -118,7 +118,7 @@ const bool TYPE_TRACKER = false;
 
 unsigned int simTime = 300;
 short nTrackers = 2;
-short nRelays = 62;
+short nRelays = 34;
 short nVictims = 2;
 bool enableNetAnim = false;
 NodeContainer firstResponders;
@@ -200,12 +200,12 @@ void installMobility( NodeContainer firstResponders, NodeContainer drones, NodeC
 	mobility.SetMobilityModel("ns3::WaypointMobilityModel",
 								"InitialPositionIsWaypoint", BooleanValue (true));
 	mobility.SetPositionAllocator ("ns3::GridPositionAllocator",
-								   "MinX", DoubleValue (930.0),
-								   "MinY", DoubleValue (930.0),
+								   "MinX", DoubleValue (950.0),
+								   "MinY", DoubleValue (950.0),
 								   "Z", DoubleValue (0),
 								   "DeltaX", DoubleValue (20.0),
 								   "DeltaY", DoubleValue (20.0),
-								   "GridWidth", UintegerValue (8),
+								   "GridWidth", UintegerValue (6),
 								   "LayoutType", StringValue ("RowFirst"));
 	mobility.Install (drones);
 
