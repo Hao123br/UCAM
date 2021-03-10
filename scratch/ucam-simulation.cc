@@ -125,9 +125,10 @@ NodeContainer firstResponders;
 list<Ptr<Node>> available_relays;
 unordered_map<unsigned int, Ptr<Node>> tracker_by_id;
 unordered_map<unsigned int, TrackerInfo> trackers_info;
+unordered_map<unsigned int, Vector> uav_charge_station;
 float max_tx_radius = 90;
-float drone_speed = 10;
-float drone_height = 30;
+float uav_speed = 10;
+float uav_height = 30;
 std::string ns3_dir;
 std::ofstream victims_positions_log;
 UAVEnergyTrace tracker_energy_trace(TYPE_TRACKER);
@@ -180,14 +181,14 @@ std::vector<Vector> do_predictions(){
 	}
 
 	for(unsigned int i = 0; i < tokens.size()-1; i+=3){
-		coordinate = Vector(std::stod(tokens[i+1]), std::stod(tokens[i+2]), drone_height);
+		coordinate = Vector(std::stod(tokens[i+1]), std::stod(tokens[i+2]), uav_height);
 		predicted_coords.push_back(coordinate);
 	}
 
 	return predicted_coords;
 }
 
-void installMobility( NodeContainer firstResponders, NodeContainer drones, NodeContainer victims)
+void installMobility( NodeContainer firstResponders, NodeContainer uavs, NodeContainer victims)
 {
 	Ptr<ListPositionAllocator> allocator = CreateObject<ListPositionAllocator> ();
 	allocator->Add (Vector(1000, 1000, 0));
@@ -207,7 +208,7 @@ void installMobility( NodeContainer firstResponders, NodeContainer drones, NodeC
 								   "DeltaY", DoubleValue (20.0),
 								   "GridWidth", UintegerValue (6),
 								   "LayoutType", StringValue ("RowFirst"));
-	mobility.Install (drones);
+	mobility.Install (uavs);
 
 	mobility.SetMobilityModel ("ns3::RandomWalk2dMobilityModel",
 								"Mode", StringValue ("Time"),
@@ -325,7 +326,7 @@ void UpdateMobilityEnergy(NodeContainer uavs, bool is_relay)
 		source = DynamicCast<BasicEnergySource>(energy_container->Get(0));
 
 		//Ordem de entrada dos parametros: posição X, posição Y, posição Z, tempo de atualização, velocidade
-		energy_spent = source->UpdateEnergyMobSource(pos.x,pos.y,pos.z, MOBILITY_ENERGY_INTERVAL, drone_speed);
+		energy_spent = source->UpdateEnergyMobSource(pos.x,pos.y,pos.z, MOBILITY_ENERGY_INTERVAL, uav_speed);
 		remaining_energy = source->GetRemainingEnergy();
 
 		write_energy_trace(EnergyType::mobility, is_relay, id, energy_spent, remaining_energy);
@@ -375,7 +376,7 @@ void initial_prediction_energy(NodeContainer trackers){
 	}
 }
 
-DeviceEnergyModelContainer installEnergy(NodeContainer drones){
+DeviceEnergyModelContainer installEnergy(NodeContainer uavs){
 	/*
 	* Create and install energy source and a single basic radio energy model on
 	* the node using helpers.
@@ -387,7 +388,7 @@ DeviceEnergyModelContainer installEnergy(NodeContainer drones){
 	basicSourceHelper.Set ("PeriodicEnergyUpdateInterval",
 						 TimeValue (Seconds (1.5)));
 	// install source
-	EnergySourceContainer sources = basicSourceHelper.Install (drones);
+	EnergySourceContainer sources = basicSourceHelper.Install (uavs);
 
 	// device energy model helper
 	WifiRadioEnergyModelHelper radioEnergyHelper;
@@ -395,16 +396,16 @@ DeviceEnergyModelContainer installEnergy(NodeContainer drones){
 	//WifiRadioEnergyModel::WifiRadioEnergyDepletionCallback callback =
 	//MakeCallback (&BasicEnergyDepletionTest::DepletionHandler, this);
 	//radioEnergyHelper.SetDepletionCallback (callback);
-	Ptr<Node> drone;
-	Ptr<MeshPointDevice> droneMeshInterface;
-	Ptr<NetDevice> droneInterface;
+	Ptr<Node> uav;
+	Ptr<MeshPointDevice> uavMeshInterface;
+	Ptr<NetDevice> uavInterface;
 	NetDeviceContainer devices;
-	for(auto iter = drones.Begin(); iter != drones.End(); ++iter)
+	for(auto iter = uavs.Begin(); iter != uavs.End(); ++iter)
 	{
-		drone = *iter;
-		droneMeshInterface = DynamicCast<MeshPointDevice> (drone->GetDevice(0));
-		droneInterface = droneMeshInterface->GetInterface(1);
-		devices.Add(droneInterface);
+		uav = *iter;
+		uavMeshInterface = DynamicCast<MeshPointDevice> (uav->GetDevice(0));
+		uavInterface = uavMeshInterface->GetInterface(1);
+		devices.Add(uavInterface);
 	}
 	
 	// install on nodes
@@ -542,9 +543,9 @@ void CourseChange(std::string context, Ptr<const MobilityModel> model)
 }
 
 // move node "smoothly" towards the given position
-void move_drone(Ptr<Node> drone, Vector destination, double n_vel) {
-	// get mobility model for drone
-    Ptr<WaypointMobilityModel> mob = drone->GetObject<WaypointMobilityModel>();
+void move_uav(Ptr<Node> uav, Vector destination, double n_vel) {
+	// get mobility model for uav
+    Ptr<WaypointMobilityModel> mob = uav->GetObject<WaypointMobilityModel>();
     Vector m_position = mob->GetPosition();
     double distance;
 
@@ -553,10 +554,10 @@ void move_drone(Ptr<Node> drone, Vector destination, double n_vel) {
 	if(distance <= 1)
 		return;
 
-	unsigned int nodeId = drone->GetId();
+	unsigned int nodeId = uav->GetId();
 	double currentTime = Simulator::Now().GetSeconds();
 	double nWaypointTime;
-	NS_LOG_DEBUG("moving drone with nodeId: " << nodeId << " from " << m_position << " to " << destination << " time: " << currentTime);
+	NS_LOG_DEBUG("moving uav with nodeId: " << nodeId << " from " << m_position << " to " << destination << " time: " << currentTime);
 
 	mob->EndMobility();
 	mob->AddWaypoint(Waypoint(Simulator::Now(), m_position));
@@ -565,25 +566,60 @@ void move_drone(Ptr<Node> drone, Vector destination, double n_vel) {
 	mob->AddWaypoint(Waypoint(Seconds(nWaypointTime), destination));
 }
 
-list<Ptr<Node>>::iterator closest_drone(Vector coordinate, list<Ptr<Node>>& drones){
+//finds the relay with lowest energy and that is farthest from the first responders
+list<Ptr<Node>>::iterator relay_to_free(list<Ptr<Node>>& relay_chain){
+	double energy;
+	double min_energy;
+	list<Ptr<Node>>::iterator selected;
+	Ptr<EnergySourceContainer> source_container;
+	Ptr<BasicEnergySource> source;
+
+	auto relay = --relay_chain.end();
+	source_container = (*relay)->GetObject<EnergySourceContainer>();
+	source = DynamicCast<BasicEnergySource>(source_container->Get(0));
+	min_energy = source->GetRemainingEnergy();
+	selected = relay;
+
+	//we assume that the last relay in the chain is the closest
+	//one to the first responders and iterate from the end
+	do
+	{
+		--relay;
+		source_container = (*relay)->GetObject<EnergySourceContainer>();
+		source = DynamicCast<BasicEnergySource>(source_container->Get(0));
+		energy = source->GetRemainingEnergy();
+		//if the energy of the current relay is equal to min_energy
+		//we select it, because it is farther from the first responders
+		//than the previous one
+		if(energy <= min_energy)
+		{
+			min_energy = energy;
+			selected = relay;
+		}
+	} while (relay != relay_chain.begin());
+
+	return selected;
+}
+
+list<Ptr<Node>>::iterator closest_uav(Vector coordinate, list<Ptr<Node>>& uavs){
 	double min;
 	double distance;
-	Vector drone_position;
+	Vector uav_position;
 	list<Ptr<Node>>::iterator closest;
 
-	auto drone = drones.begin();
-	drone_position = (*drone)->GetObject<MobilityModel>()->GetPosition();
-	min = CalculateDistance(coordinate, drone_position);
-	closest = drone++;
+	auto uav = uavs.begin();
+	uav_position = (*uav)->GetObject<MobilityModel>()->GetPosition();
+	min = CalculateDistance(coordinate, uav_position);
+	closest = uav++;
 	
-	for(; drone != drones.end(); ++drone)
+	for(; uav != uavs.end(); ++uav)
 	{
-		drone_position = (*drone)->GetObject<MobilityModel>()->GetPosition();
-		distance = CalculateDistance(coordinate, drone_position);
+		uav_position = (*uav)->GetObject<MobilityModel>()->GetPosition();
+		distance = CalculateDistance(coordinate, uav_position);
 		if(distance < min)
 		{
 			min = distance;
-			closest = drone;
+			closest = uav;
 		}
 	}
 	return closest;
@@ -611,9 +647,9 @@ Vector calculate_future_position(Ptr<WaypointMobilityModel> mobility)
 	NS_LOG_INFO("tracker next waypoint: " << destination);
 
 	distance = CalculateDistance(destination, position);
-	x = drone_speed * (destination.x - position.x) / distance;
-	y = drone_speed * (destination.y - position.y) / distance;
-	z = drone_speed * (destination.z - position.z) / distance;
+	x = uav_speed * (destination.x - position.x) / distance;
+	y = uav_speed * (destination.y - position.y) / distance;
+	z = uav_speed * (destination.z - position.z) / distance;
 
 	future_position.x = position.x + seconds * x;
 	future_position.y = position.y + seconds * y;
@@ -675,6 +711,53 @@ Vector2D unit_vector(Vector2D v){
 	return unit_vector;
 }
 
+void recharge(Ptr<Node> uav){
+	Ptr<EnergySourceContainer> source_container;
+	Ptr<BasicEnergySource> source;
+	
+	source_container = uav->GetObject<EnergySourceContainer>();
+	source = DynamicCast<BasicEnergySource>(source_container->Get(0));
+	source->CallRecharge();
+}
+
+void move_to_recharge_station(Ptr<Node> uav, double uav_speed){
+	// get mobility model for uav
+    Ptr<WaypointMobilityModel> mob = uav->GetObject<WaypointMobilityModel>();
+    Vector m_position = mob->GetPosition();
+	Vector destination = m_position;
+	Waypoint new_waypoint;
+    double distance;
+	double currentTime = Simulator::Now().GetSeconds();
+	double nWaypointTime;
+	unsigned int nodeId = uav->GetId();
+
+	NS_LOG_DEBUG("moving uav with nodeId: " << nodeId << " from " << m_position << " to recharge station. time: " << currentTime);
+
+	mob->EndMobility();
+	mob->AddWaypoint(Waypoint(Simulator::Now(), m_position));
+
+	//Reduce height first to avoid crashing with other uavs
+	destination.z = uav_height / 2;
+	distance = CalculateDistance(destination, m_position);
+	nWaypointTime = distance/uav_speed;
+	new_waypoint.time = Seconds(nWaypointTime + currentTime);
+	new_waypoint.position = destination;
+	mob->AddWaypoint(new_waypoint);
+
+	//Return to charging station
+	m_position = destination;
+	destination = uav_charge_station[nodeId];
+	distance = CalculateDistance(destination, m_position);
+	nWaypointTime += distance/uav_speed;
+	new_waypoint.time = Seconds(nWaypointTime + currentTime);
+	new_waypoint.position = destination;
+	mob->AddWaypoint(new_waypoint);
+
+	//after arriving, shutdown communications and recharge
+	Simulator::Schedule(Seconds(nWaypointTime), &set_wifi_state, uav->GetDevice(0), WIFI_OFF);
+	Simulator::Schedule(Seconds(nWaypointTime), &recharge, uav);
+}
+
 void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 	double relay_spacing;
 	double x,y;
@@ -686,7 +769,7 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 	Vector2D distance;
 	Vector2D direction;
 	Ptr<Node> tracker;
-	list<Ptr<Node>>::iterator allocated_relay;
+	list<Ptr<Node>>::iterator selected_relay;
 	unsigned int relays_required;
 	unsigned int i;
 
@@ -699,17 +782,22 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 		tracker_destination = tracker_mobility->GetNextWaypoint().position;
 		list<Ptr<Node>>& relay_chain = trackers_info[tracker->GetId()].relay_chain;
 
-		if(CalculateDistance(tracker_destination, tracker_position) > drone_speed)
+		if(CalculateDistance(tracker_destination, tracker_position) > uav_speed * 2)
 		{
-			NS_LOG_DEBUG("relays may be lagging behind, adjusting relays positions");
+			NS_LOG_DEBUG("relays may be lagging behind, adjusting positions");
 			tracker_position = calculate_future_position(tracker_mobility);
 		}
 
 		relays_required = calculate_relays_required(fr_position, tracker_position);
 
-		//TODO: implement algorithm to free unnecessary relays
-		if(relays_required < relay_chain.size())
-			relays_required = relay_chain.size();
+		//free unnecessary relays
+		while(relays_required < relay_chain.size())
+		{
+			selected_relay = relay_to_free(relay_chain);
+			available_relays.push_back(*selected_relay);
+			relay_chain.erase(selected_relay);
+			move_to_recharge_station(*selected_relay, uav_speed);
+		}
 
 		if(relays_required == 0)
 			continue;
@@ -721,25 +809,28 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 		x = relay_spacing * direction.x;
 		y = relay_spacing * direction.y;
 		i = 1;
+
+		//move relays to their new positions
 		for(auto relay : relay_chain)
 		{
 			relay_destination.x = tracker_position.x - i * x;
 			relay_destination.y = tracker_position.y - i * y;
 			relay_destination.z = tracker_position.z;
-			move_drone(relay, relay_destination, drone_speed);
+			move_uav(relay, relay_destination, uav_speed);
 			++i;
 		}
 
+		//add more relays if necessary
 		while(relay_chain.size() < relays_required && available_relays.size() != 0)
 		{
 			relay_destination.x = tracker_position.x - i * x;
 			relay_destination.y = tracker_position.y - i * y;
 			relay_destination.z = tracker_position.z;
-			allocated_relay = closest_drone(relay_destination, available_relays);
-			relay_chain.push_back(*allocated_relay);
-			available_relays.erase(allocated_relay);
-			move_drone(*allocated_relay, relay_destination, drone_speed);
-			set_wifi_state((*allocated_relay)->GetDevice(0), WIFI_ON);
+			selected_relay = closest_uav(relay_destination, available_relays);
+			relay_chain.push_back(*selected_relay);
+			available_relays.erase(selected_relay);
+			move_uav(*selected_relay, relay_destination, uav_speed);
+			set_wifi_state((*selected_relay)->GetDevice(0), WIFI_ON);
 			++i;
 		}
 	}
@@ -755,7 +846,7 @@ void track_victims(NodeContainer victims, NodeContainer trackers)
 	Vector victim_position;
 	std::vector<Vector> victims_coords;
 
-	NS_ASSERT(drone_height <= max_tx_radius);
+	NS_ASSERT(uav_height <= max_tx_radius);
 
 	if(now >= 10)
 	{
@@ -767,7 +858,7 @@ void track_victims(NodeContainer victims, NodeContainer trackers)
 		{
 			victim = *iter;
 			victim_position = victim->GetObject<MobilityModel>()->GetPosition();
-			victim_position.z = drone_height;
+			victim_position.z = uav_height;
 			victims_coords.push_back(victim_position);
 		}
 	}
@@ -776,8 +867,8 @@ void track_victims(NodeContainer victims, NodeContainer trackers)
 	auto iter = victims.Begin();
 	for(Vector victim_position : victims_coords)
 	{
-		nearest_tracker = closest_drone(victim_position, available_trackers);
-		move_drone(*nearest_tracker, victim_position, drone_speed);
+		nearest_tracker = closest_uav(victim_position, available_trackers);
+		move_uav(*nearest_tracker, victim_position, uav_speed);
 		available_trackers.erase(nearest_tracker);
 		victim = *iter++;
 		trackers_info[(*nearest_tracker)->GetId()].tracked_victim = victim;
@@ -852,7 +943,8 @@ int main  (int argc, char *argv[])
 	relays.Create(nRelays);
 	NodeContainer victims;
 	victims.Create(nVictims);
-	NodeContainer nodes = NodeContainer (firstResponders, trackers, relays, victims);
+	NodeContainer uavs = NodeContainer (trackers, relays);
+	NodeContainer nodes = NodeContainer (firstResponders, uavs, victims);
 
 	//YansWifiChannelHelper channel = YansWifiChannelHelper::Default ();
 	YansWifiChannelHelper channel;
@@ -885,7 +977,14 @@ int main  (int argc, char *argv[])
 		set_wifi_state (*iter, WIFI_OFF);
 	}
 
-	installMobility (firstResponders, NodeContainer(trackers, relays), victims);
+	installMobility (firstResponders, uavs, victims);
+
+	for(auto iter = uavs.Begin(); iter != uavs.End(); ++iter)
+	{
+		Ptr<Node> uav = *iter;
+		Ptr<MobilityModel> mob = uav->GetObject<MobilityModel>();
+		uav_charge_station[uav->GetId()] = mob->GetPosition();
+	}
 
 	DeviceEnergyModelContainer tracker_emodels;
 	DeviceEnergyModelContainer relay_emodels;
