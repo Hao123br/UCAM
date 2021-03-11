@@ -77,7 +77,7 @@ public:
 	std::ofstream comms;
 
 	UAVEnergyTrace(bool r)
-	:is_relay{r}
+	:is_relay(r)
 	{
 		std::string prefix = is_relay ? "relay-" : "tracker-";
 
@@ -101,6 +101,26 @@ public:
 			prediction.close();
 			video.close();
 		}
+	}
+};
+
+Ptr<BasicEnergySource> get_energy_source(Ptr<Node> uav);
+
+class EnergyEqualTo{
+	double energy;
+public:
+	EnergyEqualTo(const double e) {
+		energy = std::trunc(e);
+	}
+
+	bool operator()(const Ptr<Node> uav) const {
+		Ptr<BasicEnergySource> source;
+		double remaining_energy;
+
+		source = get_energy_source(uav);
+		remaining_energy = std::trunc(source->GetRemainingEnergy());
+
+		return remaining_energy == energy;
 	}
 };
 
@@ -603,18 +623,18 @@ list<Ptr<Node>>::iterator relay_to_free(list<Ptr<Node>>& relay_chain){
 	return selected;
 }
 
-list<Ptr<Node>>::iterator closest_uav(Vector coordinate, list<Ptr<Node>>& uavs){
+list<Ptr<Node>>::iterator closest_uav(Vector coordinate, list<Ptr<Node>>::iterator begin, list<Ptr<Node>>::iterator end){
 	double min;
 	double distance;
 	Vector uav_position;
 	list<Ptr<Node>>::iterator closest;
 
-	auto uav = uavs.begin();
+	auto uav = begin;
 	uav_position = (*uav)->GetObject<MobilityModel>()->GetPosition();
 	min = CalculateDistance(coordinate, uav_position);
 	closest = uav++;
-	
-	for(; uav != uavs.end(); ++uav)
+
+	for(; uav != end; ++uav)
 	{
 		uav_position = (*uav)->GetObject<MobilityModel>()->GetPosition();
 		distance = CalculateDistance(coordinate, uav_position);
@@ -625,6 +645,58 @@ list<Ptr<Node>>::iterator closest_uav(Vector coordinate, list<Ptr<Node>>& uavs){
 		}
 	}
 	return closest;
+}
+
+list<Ptr<Node>>::iterator closest_uav(Vector coordinate, list<Ptr<Node>>& uavs){
+	return closest_uav(coordinate, uavs.begin(), uavs.end());
+}
+
+bool lower_charge(Ptr<Node> uav1, Ptr<Node> uav2){
+	Ptr<BasicEnergySource> source1, source2;
+	double remaining_energy1, remaining_energy2;
+
+	source1 = get_energy_source(uav1);
+	source2 = get_energy_source(uav2);
+
+	remaining_energy1 = source1->GetRemainingEnergy();
+	remaining_energy2 = source2->GetRemainingEnergy();
+
+	return remaining_energy1 < remaining_energy2;
+}
+
+//debug function
+std::vector<double> to_energy_vector(list<Ptr<Node>>& uavs){
+	Ptr<BasicEnergySource> source;
+	double remaining_energy;
+	std::vector<double> energy_vector;
+
+	for(auto iter = uavs.begin(); iter != uavs.end(); ++iter)
+	{
+		source = get_energy_source(*iter);
+		remaining_energy = source->GetRemainingEnergy();
+		energy_vector.push_back(remaining_energy);
+	}
+
+	return energy_vector;
+}
+
+//Selects relay to add based on energy and distance to coordinate
+list<Ptr<Node>>::iterator relay_to_add(Vector coordinate, list<Ptr<Node>>& available_relays){
+	list<Ptr<Node>>::iterator begin = available_relays.begin();
+	list<Ptr<Node>>::iterator end = available_relays.end();
+	list<Ptr<Node>>::iterator max_energy_element;
+	list<Ptr<Node>>::iterator selected_relay;
+	Ptr<BasicEnergySource> source;
+	double max_energy;
+
+	max_energy_element = std::max_element(begin, end, lower_charge);
+	source = get_energy_source(*max_energy_element);
+	max_energy = source->GetRemainingEnergy();
+
+	end = std::partition(begin, end, EnergyEqualTo(max_energy));
+	selected_relay = closest_uav(coordinate, begin, end);
+
+	return selected_relay;
 }
 
 void set_wifi_state(Ptr<NetDevice> relay, bool state) {
@@ -828,7 +900,7 @@ void update_relay_chains(NodeContainer trackers, Ptr<Node> firstResponders){
 			relay_destination.x = tracker_position.x - i * x;
 			relay_destination.y = tracker_position.y - i * y;
 			relay_destination.z = tracker_position.z;
-			selected_relay = closest_uav(relay_destination, available_relays);
+			selected_relay = relay_to_add(relay_destination, available_relays);
 			relay_chain.push_back(*selected_relay);
 			available_relays.erase(selected_relay);
 			move_uav(*selected_relay, relay_destination, uav_speed);
