@@ -254,12 +254,21 @@ void write_energy_trace(EnergyType eType, bool is_relay, unsigned int id, double
 	}
 }
 
+Ptr<BasicEnergySource> get_energy_source(Ptr<Node> uav){
+	Ptr<EnergySourceContainer> energy_container;
+	Ptr<BasicEnergySource> source;
+
+	energy_container = uav->GetObject<EnergySourceContainer> ();
+	source = DynamicCast<BasicEnergySource> (energy_container->Get(0));
+
+	return source;
+}
+
 void write_comms_energy_trace(NodeContainer uavs, DeviceEnergyModelContainer emodels, bool is_relay)
 {
 	Ptr<Node> uav;
 	unsigned int id;
 	Ptr<WifiRadioEnergyModel> wifi_energy_model;
-	Ptr<EnergySourceContainer> energy_container;
 	Ptr<BasicEnergySource> source;
 	double energy_spent, remaining_energy;
 
@@ -276,8 +285,7 @@ void write_comms_energy_trace(NodeContainer uavs, DeviceEnergyModelContainer emo
 
 		energy_spent = wifi_energy_model->GetTotalEnergyConsumption ();
 
-		energy_container = uav->GetObject<EnergySourceContainer> ();
-		source = DynamicCast<BasicEnergySource> (energy_container->Get(0));
+		source = get_energy_source(uav);
 		remaining_energy = source->GetRemainingEnergy ();
 
 		write_energy_trace(EnergyType::comms, is_relay, id, energy_spent, remaining_energy);
@@ -311,7 +319,6 @@ void UpdateMobilityEnergy(NodeContainer uavs, bool is_relay)
 	Ptr<Node> uav;
 	unsigned int id;
 	Vector pos;
-	Ptr<EnergySourceContainer> energy_container;
 	Ptr<BasicEnergySource> source;
 	double energy_spent, remaining_energy;
 
@@ -322,8 +329,7 @@ void UpdateMobilityEnergy(NodeContainer uavs, bool is_relay)
 		id = uav->GetId();
 		pos = uav->GetObject<MobilityModel>()->GetPosition ();
 
-		energy_container = uav->GetObject<EnergySourceContainer> ();
-		source = DynamicCast<BasicEnergySource>(energy_container->Get(0));
+		source = get_energy_source(uav);
 
 		//Ordem de entrada dos parametros: posição X, posição Y, posição Z, tempo de atualização, velocidade
 		energy_spent = source->UpdateEnergyMobSource(pos.x,pos.y,pos.z, MOBILITY_ENERGY_INTERVAL, uav_speed);
@@ -337,13 +343,11 @@ void UpdateMobilityEnergy(NodeContainer uavs, bool is_relay)
 
 void update_video_energy(Ptr<Node> tracker){
 	unsigned int id;
-	Ptr<EnergySourceContainer> energy_container;
 	Ptr<BasicEnergySource> source;
 	double remaining_energy;
 
 	id = tracker->GetId();
-	energy_container = tracker->GetObject<EnergySourceContainer>();
-	source = DynamicCast<BasicEnergySource>(energy_container->Get(0));
+	source = get_energy_source(tracker);
 	source->ProcessEnergy(VIDEO_ENERGY_COST);
 
 	remaining_energy = source->GetRemainingEnergy();
@@ -354,13 +358,11 @@ void update_video_energy(Ptr<Node> tracker){
 
 void update_prediction_energy(Ptr<Node> tracker){
 	unsigned int id;
-	Ptr<EnergySourceContainer> energy_container;
 	Ptr<BasicEnergySource> source;
 	double remaining_energy;
 
 	id = tracker->GetId();
-	energy_container = tracker->GetObject<EnergySourceContainer>();
-	source = DynamicCast<BasicEnergySource>(energy_container->Get(0));
+	source = get_energy_source(tracker);
 	source->ProcessEnergy(PREDICTION_ENERGY_COST);
 
 	remaining_energy = source->GetRemainingEnergy();
